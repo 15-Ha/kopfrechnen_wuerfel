@@ -148,6 +148,7 @@ summary{cursor:pointer;font-weight:700;padding:8px 0;min-height:44px}
 .bans.typed .ent{color:var(--brand);text-shadow:0 0 16px rgba(34,211,238,.6)}
 .caret{width:.08em;height:.9em;background:var(--brand);animation:blink 1s steps(1) infinite}
 @keyframes blink{50%{opacity:0}}
+.lvtable{width:100%;border-collapse:collapse}.lvtable td{padding:10px 8px;border-bottom:1px solid #2a3566;vertical-align:top}.lvtable td:first-child{font-weight:800;white-space:nowrap}
 .kp{display:grid;grid-template-columns:repeat(4,1fr);gap:1.2cqh 1.2cqw;width:min(70cqw,92cqh);flex:0 0 auto}
 .kp.nums,.kp.ops{grid-template-columns:repeat(var(--c),1fr);width:min(86cqw,120cqh)}
 .kp.acts{grid-template-columns:1fr 1fr 2fr;width:min(86cqw,120cqh)}
@@ -230,7 +231,7 @@ summary{cursor:pointer;font-weight:700;padding:8px 0;min-height:44px}
 <script>
 'use strict';
 /* =====================================================================
-   KOPFSACHE WÜRFEL – eigenständige Kopfrechen-App für 2–5 Personen an einem Gerät
+   KOPFSACHE WÜRFEL – eigenständige Kopfrechen-App für 2–5 Personen an einem Gerät · Version 2026-11-20 · LearningView-Anbieter «generiert»
    ---------------------------------------------------------------------
    SPIELPRINZIP (analog + digital)
    Das Gerät liegt in der Tischmitte und zeigt allen dieselbe Aufgabe
@@ -395,7 +396,7 @@ function loadCfg(){let c={};try{c=JSON.parse(localStorage.getItem(KEY)||'{}')}ca
   if(c.cfgVer!==3){if(!c.cfgVer){delete c.sound;if(c.gameSettings)delete c.gameSettings.blitz}delete c.inputTime;c.cfgVer=3}  // neue Standards (Ton aus, 10 s, Blitz 4 Zahlen)
   return Object.assign(JSON.parse(JSON.stringify(DEFAULT_CFG)),c)}
 let cfg=loadCfg();
-const saveCfg=()=>{try{localStorage.setItem(KEY,JSON.stringify(cfg))}catch(e){}};
+const saveCfg=()=>{try{localStorage.setItem(KEY,JSON.stringify(cfg))}catch(e){}try{lvQueue()}catch(e){}};
 const curTheme=()=>THEMES[cfg.theme]||THEMES[Object.keys(THEMES)[0]];
 const curGame=()=>{const t=curTheme();return t.games.find(g=>g.id===cfg.game)||t.games[0]};
 cfg.theme=curTheme().id;cfg.game=curGame().id;cfg.n=clamp(+cfg.n||3,2,5);
@@ -550,7 +551,7 @@ function startGame(){
      state:'ready',round:0,rd:null,elapsed:0,cd:0,stopper:null,revealed:false,note:'',result:'',wl:null,menuArm:false,menuTimer:null};
   buildGame();
   $('#setup').style.display='none';$('#game').style.display='flex';
-  try{navigator.wakeLock&&navigator.wakeLock.request('screen').then(w=>{G&&(G.wl=w)}).catch(()=>{})}catch(e){}
+  try{navigator.wakeLock&&(!document.featurePolicy||!document.featurePolicy.allowsFeature||document.featurePolicy.allowsFeature('screen-wake-lock'))&&navigator.wakeLock.request('screen').then(w=>{G&&(G.wl=w)}).catch(()=>{})}catch(e){}
   lastT=performance.now();clearInterval(timer);timer=setInterval(loop,100);
   renderAll();
 }
@@ -777,7 +778,7 @@ function checkEnd(){
   if(G.state==='over')return;
   const P=G.players;
   if((G.mode==='points'&&P.some(p=>p.score>=G.points))||(G.mode==='rounds'&&G.round>=G.rounds&&G.state==='roundover')){
-    G.state='over';beep(523,.15);setTimeout(()=>beep(659,.15),160);setTimeout(()=>beep(784,.25),320);
+    G.state='over';recordStats();beep(523,.15);setTimeout(()=>beep(659,.15),160);setTimeout(()=>beep(784,.25),320);
   }
 }
 function adjust(p,d){
@@ -787,7 +788,129 @@ function adjust(p,d){
   renderAll();
 }
 document.addEventListener('gesturestart',e=>e.preventDefault());
-renderSetup();
+/* ===== LearningView-Anbieter «generiert» (Version 2026-11-20) =====
+   Modi: student (laden/speichern) · class (Klassenübersicht) · studentReview (nur lesen) · preview/settings/ausserhalb LearningView (spielbar, ohne Speicherung in LearningView).
+   Gespeichert wird: Einstellungen (ohne Spielernamen) + einfache Statistik. Max. 1 MiB. */
+const LV_ORIGIN='https://learningview.org';
+let lvMode='standalone',lvCanSave=false,lvStats={games:0,rounds:0,last:0,by:{}};
+const lvSend=m=>{try{window.parent.postMessage(m,LV_ORIGIN)}catch(e){}};
+const lvWaiters={};
+const lvWait=(type,ms)=>new Promise(res=>{(lvWaiters[type]=lvWaiters[type]||[]).push(res);if(ms)setTimeout(()=>res(null),ms)});
+addEventListener('message',e=>{
+  let ok=false;try{ok=e.source===window.parent}catch(x){}
+  if(!ok||e.origin!==LV_ORIGIN)return;
+  const d=e.data;
+  if(d==='SAVED'){(lvWaiters.saved||[]).splice(0).forEach(r=>r(true));return}
+  if(d&&typeof d==='object'&&d.type){
+    if(d.type==='saveAnswerDataError'){lvBusy=false;(lvWaiters.saved||[]).splice(0).forEach(r=>r(false));lvNote(d.error==='ANSWER_DATA_TOO_LARGE'?'Speichern nicht möglich: Daten zu gross.':'Speichern in LearningView fehlgeschlagen.');return}
+    if(d.type==='classDataConsentPending'){lvPending=true;lvRenderClassMsg('Warte auf die Zustimmung der Lehrperson …');return}
+    (lvWaiters[d.type]||[]).splice(0).forEach(r=>r(d));
+  }
+});
+let lvPending=false,lvBooted=false;
+function lvNote(t){let n=document.getElementById('lvnote');if(!n){n=document.createElement('div');n.id='lvnote';n.setAttribute('role','status');n.style.cssText='position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:99;background:#7f1d1d;color:#fff;padding:10px 16px;border-radius:12px;font:700 14px system-ui;max-width:90vw';document.body.append(n)}n.textContent=t;clearTimeout(n._t);n._t=setTimeout(()=>n.remove(),6000)}
+async function lvGetMode(){
+  const m=window.learningView&&window.learningView.mode;if(m)return m;
+  lvSend({type:'getEmbedContext'});
+  const r=await lvWait('sendEmbedContext',6000);
+  return (r&&r.mode)||'student';
+}
+function lvParse(txt){try{const o=txt?JSON.parse(txt):null;return o&&typeof o==='object'?o:null}catch(e){return null}}
+function lvSnapshot(){const c=JSON.parse(JSON.stringify(cfg));delete c.names;delete c.theme;delete c.game;return {v:1,cfg:c,stats:lvStats}}
+function recordStats(){
+  try{
+    lvStats.games=(lvStats.games||0)+1;lvStats.rounds=(lvStats.rounds||0)+(G?G.round:0);lvStats.last=Date.now();
+    const id=G&&G.g?G.g.id:'?';lvStats.by=lvStats.by||{};const b=lvStats.by[id]=lvStats.by[id]||{games:0,rounds:0};b.games++;b.rounds+=G?G.round:0;
+    lvQueue();
+  }catch(e){}
+}
+let lvTimer=null,lvBusy=false,lvLast=0;
+function lvQueue(){if(lvMode!=='student'||!lvCanSave)return;clearTimeout(lvTimer);lvTimer=setTimeout(lvFlush,2500)}
+async function lvFlush(){
+  if(lvMode!=='student'||!lvCanSave||lvBusy)return;
+  const txt=JSON.stringify(lvSnapshot());
+  if(new TextEncoder().encode(txt).length>1048576){lvNote('Speichern nicht möglich: Daten zu gross.');return}
+  const gap=2000-(Date.now()-lvLast);if(gap>0)await new Promise(r=>setTimeout(r,gap));
+  lvBusy=true;lvLast=Date.now();
+  lvSend({type:'saveAnswerData',data:txt});
+  const r=await lvWait('saved',12000);
+  lvBusy=false;if(r===null)lvNote('LearningView hat das Speichern nicht bestätigt.');
+}
+addEventListener('pagehide',()=>{if(lvMode==='student'&&lvCanSave&&!lvBusy){try{lvSend({type:'saveAnswerData',data:JSON.stringify(lvSnapshot())})}catch(e){}}});
+const fmtDate=t=>{if(!t)return '–';try{return new Date(t).toLocaleDateString('de-CH')}catch(e){return '–'}};
+const GAMENAMES={blitz:'Blitzrechnen',trio:'Trio-Raster',dicecalc:'Würfel-Rechnen'};
+function lvStatLine(st){
+  if(!st||!st.games)return 'Noch nicht gespielt';
+  const by=Object.entries(st.by||{}).map(([k,v])=>`${GAMENAMES[k]||k}: ${v.games}`).join(' · ');
+  return `${st.games} Spiel${st.games===1?'':'e'} · ${st.rounds||0} Runden · zuletzt ${fmtDate(st.last)}`+(by?` (${by})`:'');
+}
+function lvShell(title,...kids){
+  $('#game').style.display='none';$('#setup').style.display='block';
+  $('#setupBody').replaceChildren(h('h1',{},title),...kids);
+}
+function lvRenderClassMsg(t){const m=document.getElementById('lvclassmsg');if(m)m.textContent=t}
+async function lvClassView(){
+  const out=h('div',{class:'card'},h('p',{id:'lvclassmsg',class:'sub'},'Lade Klassenübersicht …'));
+  lvShell(curGame().name+' – Klassenübersicht',h('p',{class:'sub'},'Hier siehst du, wie oft die Lernenden gespielt haben. Im Klassenmodus wird nicht gespielt.'),out,
+    h('button',{class:'skip',type:'button',onclick:()=>lvClassView()},'↻ Aktualisieren'));
+  lvPending=false;lvSend({type:'getClassAnswerData'});
+  const r=await lvWait('sendClassAnswerData',0);
+  const box=h('div',{class:'card'});
+  if(!r||r.error){
+    const e=r&&r.error;
+    box.append(h('p',{class:'sub'},e==='CLASS_DATA_CONSENT_DENIED'?'Die Zustimmung zur Anzeige der Klassendaten wurde abgelehnt.':e==='CLASS_ANSWER_DATA_UNAVAILABLE'?'Klassendaten sind hier nicht verfügbar.':'Klassendaten konnten nicht geladen werden.'));
+  }else{
+    const rows=[];
+    for(const en of (Array.isArray(r.data)?r.data:[])){
+      try{
+        const nm=`${en.name||''} ${en.surname||''}`.trim()||'(ohne Namen)';
+        rows.push(h('tr',{},h('td',{},nm),h('td',{},lvStatLine((lvParse(en.data)||{}).stats))));
+      }catch(x){}
+    }
+    box.append(rows.length?h('table',{class:'lvtable'},h('tbody',{},rows)):h('p',{class:'sub'},'Noch keine Daten vorhanden.'));
+  }
+  out.replaceWith(box);
+}
+async function lvReviewView(){
+  lvShell(curGame().name+' – Ansicht Lehrperson',h('div',{class:'card'},h('p',{id:'lvclassmsg',class:'sub'},'Lade …')));
+  lvSend({type:'getAnswerData'});
+  const r=await lvWait('sendAnswerData',10000);
+  const o=r&&r.data?lvParse(r.data):null;
+  const st=o&&o.stats;
+  const c=o&&o.cfg;
+  lvShell(curGame().name+' – Ansicht Lehrperson',h('div',{class:'card'},
+    h('p',{class:'sub'},r===null?'LearningView hat nicht geantwortet.':lvStatLine(st)),
+    c?h('p',{class:'sub'},`Einstellungen: ${c.endMode==='rounds'?(c.rounds||'?')+' Runden':'bis '+(c.points||'?')+' Punkte'} · Spielerzahl ${c.n||'?'}`):null));
+}
+async function lvBoot(){
+  const startPlain=()=>{lvBooted=true;renderSetup()};
+  let framed=false;try{framed=window.parent!==window}catch(e){framed=true}
+  if(!framed){lvMode='standalone';return startPlain()}
+  $('#setupBody').replaceChildren(h('p',{class:'sub'},'Lade …'));
+  lvMode=await lvGetMode();lvBooted=true;
+  lvSend({type:'setDialogSize',size:'max'});
+  if(lvMode==='student'){
+    lvSend({type:'getAnswerData'});
+    const r=await lvWait('sendAnswerData',10000);
+    if(r===null){lvCanSave=false;lvNote('Gespeicherte Daten konnten nicht geladen werden – es wird nichts überschrieben.')}
+    else{
+      lvCanSave=true;
+      const o=lvParse(r.data);
+      if(o){
+        if(o.cfg&&typeof o.cfg==='object'){const keep={names:cfg.names,theme:cfg.theme,game:cfg.game};Object.assign(cfg,o.cfg,keep);cfg.n=clamp(+cfg.n||3,2,5)}
+        if(o.stats&&typeof o.stats==='object')lvStats=Object.assign({games:0,rounds:0,last:0,by:{}},o.stats);
+      }
+    }
+    return renderSetup();
+  }
+  if(lvMode==='class')return lvClassView();
+  if(lvMode==='studentReview')return lvReviewView();
+  renderSetup();   // preview, settings, unbekannt: spielbar, ohne Speicherung in LearningView
+}
+addEventListener('error',e=>{if(!lvBooted||!$('#setupBody').children.length){try{$('#setup').style.display='block';$('#setupBody').replaceChildren(h('p',{class:'sub'},'Die App konnte nicht gestartet werden: '+((e&&e.message)||'Unbekannter Fehler')))}catch(x){}}});
+setTimeout(()=>{if(!lvBooted){try{lvBooted=true;renderSetup()}catch(x){}}},15000);
+
+lvBoot();
 </script>
 </body>
 </html>
